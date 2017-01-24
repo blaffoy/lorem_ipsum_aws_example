@@ -1,0 +1,456 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS CloudFormation Sample Template AutoScalingMultiAZWithNotifications: Create a multi-az, load balanced and Auto Scaled sample web site running on an Apache Web Serever. The application is configured to span all Availability Zones in the region and is Auto-Scaled based on the CPU utilization of the web servers. Notifications will be sent to the operator email address on scaling events. The instances are load balanced with a simple health check against the default web page. **WARNING** This template creates one or more Amazon EC2 instances and an Elastic Load Balancer. You will be billed for the AWS resources used if you create a stack from this template.",
+    "Parameters": {
+        "InstanceType": {
+            "Description": "WebServer EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [ "t2.micro" ],
+            "ConstraintDescription": "must be a valid EC2 instance type."
+        },
+        "OperatorEMail": {
+            "Description": "EMail address to notify if there are any scaling operations",
+            "Type": "String",
+            "ConstraintDescription": "must be a valid email address."
+        },
+        "KeyName": {
+            "Description": "The EC2 Key Pair to allow SSH access to the instances",
+            "Type": "String",
+            "Default": "",
+            "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+        },
+        "SSHLocation": {
+            "Description": "The IP address range that can be used to SSH to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "x.x.x.x/x",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+        }
+    },
+    "Conditions": {
+        "CondAttachPublicKey": {"Fn::Not": [{"Fn::Equals" : [{"Ref": "KeyName"}, ""]}]},
+        "CondOpenSSHPortOnInstances": {"Fn::Not": [{"Fn::Equals" : [{"Ref": "SSHLocation"}, "x.x.x.x/x"]}]}
+    },
+    "Mappings": {
+        "AWSInstanceType2Arch": {
+            "t2.micro": {
+                "Arch": "HVM64"
+            }
+        },
+        "AWSInstanceType2NATArch": {
+            "t2.micro": {
+                "Arch": "NATHVM64"
+            }
+        },
+        "AWSRegionArch2AMI": {
+            "us-east-1": {
+                "HVM64": "ami-6869aa05"
+            },
+            "us-west-2": {
+                "HVM64": "ami-7172b611"
+            },
+            "us-west-1": {
+                "HVM64": "ami-31490d51"
+            },
+            "eu-west-1": {
+                "HVM64": "ami-f9dd458a"
+            },
+            "eu-west-2": {
+                "HVM64": "ami-886369ec"
+            },
+            "eu-central-1": {
+                "HVM64": "ami-ea26ce85"
+            },
+            "ap-northeast-1": {
+                "HVM64": "ami-374db956"
+            },
+            "ap-northeast-2": {
+                "HVM64": "ami-2b408b45"
+            },
+            "ap-southeast-1": {
+                "HVM64": "ami-a59b49c6"
+            },
+            "ap-southeast-2": {
+                "HVM64": "ami-dc361ebf"
+            },
+            "ap-south-1": {
+                "HVM64": "ami-ffbdd790"
+            },
+            "us-east-2": {
+                "HVM64": "ami-f6035893"
+            },
+            "ca-central-1": {
+                "HVM64": "ami-730ebd17"
+            },
+            "sa-east-1": {
+                "HVM64": "ami-6dd04501"
+            },
+            "cn-north-1": {
+                "HVM64": "ami-8e6aa0e3"
+            }
+        }
+    },
+    "Resources": {
+        "NotificationTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "Subscription": [
+                {
+                    "Endpoint": {
+                        "Ref": "OperatorEMail"
+                    },
+                    "Protocol": "email"
+                }
+                ]
+            }
+        },
+        "WebServerGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AvailabilityZones": {
+                    "Fn::GetAZs": ""
+                },
+                "LaunchConfigurationName": {
+                    "Ref": "LaunchConfig"
+                },
+                "MinSize": "1",
+                "MaxSize": "3",
+                "LoadBalancerNames": [{
+                    "Ref": "ElasticLoadBalancer"
+                    }],
+                    "NotificationConfiguration": {
+                        "TopicARN": {
+                            "Ref": "NotificationTopic"
+                        },
+                        "NotificationTypes": [
+                            "autoscaling:EC2_INSTANCE_LAUNCH",
+                            "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+                            "autoscaling:EC2_INSTANCE_TERMINATE",
+                            "autoscaling:EC2_INSTANCE_TERMINATE_ERROR"
+                        ]
+                    }
+            },
+            "CreationPolicy": {
+                "ResourceSignal": {
+                    "Timeout": "PT15M",
+                    "Count": "1"
+                }
+            },
+            "UpdatePolicy": {
+                "AutoScalingRollingUpdate": {
+                    "MinInstancesInService": "1",
+                    "MaxBatchSize": "1",
+                    "PauseTime": "PT15M",
+                    "WaitOnResourceSignals": "true"
+                }
+            }
+        },
+        "LaunchConfig": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Metadata": {
+                "Comment": "Install a simple application",
+                "AWS::CloudFormation::Init": {
+                    "config": {
+                        "packages": {
+                            "yum": {
+                                "httpd": [ ]
+                            }
+                        },
+                        "files": {
+                            "/var/www/html/index.html": {
+                                "source": "https://raw.githubusercontent.com/blaffoy/lorem_ipsum_aws_example/master/assets/index.html",
+                                "mode": "000644",
+                                "owner": "root",
+                                "group": "root"
+                            },
+                            "/var/www/html/img/lorem_ipsum.jpg": {
+                                "source": "https://raw.githubusercontent.com/blaffoy/lorem_ipsum_aws_example/master/assets/img/lorem_ipsum.jpg",
+                                "mode": "000644",
+                                "owner": "root",
+                                "group": "root"
+                            },
+                            "/etc/cfn/cfn-hup.conf": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "[main] ",
+                                            "stack=",
+                                            { "Ref": "AWS::StackId" },
+                                            " ",
+                                            "region=",
+                                            { "Ref": "AWS::Region" },
+                                            " "
+                                        ]
+                                    ]
+                                },
+                                "mode": "000400",
+                                "owner": "root",
+                                "group": "root"
+                            },
+                            "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "[cfn-auto-reloader-hook] ",
+                                            "triggers=post.update ",
+                                            "path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init ",
+                                            "action=/opt/aws/bin/cfn-init -v ",
+                                            " --stack ",
+                                            { "Ref": "AWS::StackName" },
+                                            " --resource LaunchConfig ",
+                                            " --region ",
+                                            { "Ref": "AWS::Region" },
+                                            " ",
+                                            "runas=root "
+                                        ]
+                                    ]
+                                }
+                            }
+                        },
+                        "services": {
+                            "sysvinit": {
+                                "httpd": {
+                                    "enabled": "true",
+                                    "ensureRunning": "true"
+                                },
+                                "cfn-hup": {
+                                    "enabled": "true",
+                                    "ensureRunning": "true",
+                                    "files": [
+                                        "/etc/cfn/cfn-hup.conf",
+                                        "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                                        ]
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "KeyName": {
+                    "Fn::If" : [
+                        "CondAttachPublicKey",
+                        {"Ref": "KeyName"},
+                        {"Ref": "AWS::NoValue"}
+                    ]
+                },
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "AWSRegionArch2AMI",
+                    {
+                        "Ref": "AWS::Region"
+                    },
+                    {
+                        "Fn::FindInMap": [
+                            "AWSInstanceType2Arch",
+                        {
+                            "Ref": "InstanceType"
+                        },
+                        "Arch"
+                            ]
+                    }
+                    ]
+                },
+                "SecurityGroups": [
+                {
+                    "Ref": "InstanceSecurityGroup"
+                }
+                ],
+                "InstanceType": {
+                    "Ref": "InstanceType"
+                },
+
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash -xe\n",
+                                "yum update -y aws-cfn-bootstrap\n",
+                                "/opt/aws/bin/cfn-init -v ",
+                                "         --stack ",
+                                {
+                                    "Ref": "AWS::StackName"
+                                },
+                                "         --resource LaunchConfig ",
+                                "         --region ",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                "\n",
+                                "/opt/aws/bin/cfn-signal -e $? ",
+                                "         --stack ",
+                                {
+                                    "Ref": "AWS::StackName"
+                                },
+                                "         --resource WebServerGroup ",
+                                "         --region ",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                "\n"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "WebServerScaleUpPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "WebServerGroup"
+                },
+                "Cooldown": "60",
+                "ScalingAdjustment": "1"
+            }
+        },
+        "WebServerScaleDownPolicy": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "WebServerGroup"
+                },
+                "Cooldown": "60",
+                "ScalingAdjustment": "-1"
+            }
+        },
+        "CPUAlarmHigh": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "Scale-up if CPU > 90% for 10 minutes",
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/EC2",
+                "Statistic": "Average",
+                "Period": "300",
+                "EvaluationPeriods": "2",
+                "Threshold": "90",
+                "AlarmActions": [
+                {
+                    "Ref": "WebServerScaleUpPolicy"
+                }
+                ],
+                    "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": {
+                            "Ref": "WebServerGroup"
+                        }
+                    }
+                ],
+                "ComparisonOperator": "GreaterThanThreshold"
+            }
+        },
+        "CPUAlarmLow": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmDescription": "Scale-down if CPU < 70% for 10 minutes",
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/EC2",
+                "Statistic": "Average",
+                "Period": "300",
+                "EvaluationPeriods": "2",
+                "Threshold": "70",
+                "AlarmActions": [
+                {
+                    "Ref": "WebServerScaleDownPolicy"
+                }
+                ],
+                    "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": {
+                            "Ref": "WebServerGroup"
+                        }
+                    }
+                ],
+                "ComparisonOperator": "LessThanThreshold"
+            }
+        },
+        "ElasticLoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
+                "AvailabilityZones": {
+                    "Fn::GetAZs": ""
+                },
+                "CrossZone": "true",
+                "Listeners": [
+                {
+                    "LoadBalancerPort": "80",
+                    "InstancePort": "80",
+                    "Protocol": "HTTP"
+                }
+                ],
+               "HealthCheck": {
+                   "Target": "HTTP:80/",
+                   "HealthyThreshold": "3",
+                   "UnhealthyThreshold": "5",
+                   "Interval": "30",
+                   "Timeout": "5"
+               }
+            }
+        },
+        "InstanceSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable SSH access and HTTP from the load balancer only",
+                "SecurityGroupIngress": [
+                    "Fn::If" : [
+                        "CondOpenSSHPortOnInstances",
+                        {
+                            "IpProtocol": "tcp",
+                            "FromPort": "22",
+                            "ToPort": "22",
+                            "CidrIp": {
+                                "Ref": "SSHLocation"
+                            }
+                        },
+                        {}
+                    ],
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "80",
+                        "ToPort": "80",
+                        "SourceSecurityGroupOwnerId": {
+                            "Fn::GetAtt": [
+                                "ElasticLoadBalancer",
+                                "SourceSecurityGroup.OwnerAlias"
+                            ]
+                        },
+                        "SourceSecurityGroupName": {
+                            "Fn::GetAtt": [
+                                "ElasticLoadBalancer",
+                                "SourceSecurityGroup.GroupName"
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "URL": {
+            "Description": "The URL of the website",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "http://",
+                        {
+                            "Fn::GetAtt": [
+                                "ElasticLoadBalancer",
+                                "DNSName"
+                                ]
+                        }
+                    ]
+                ]
+            }
+        }
+    }
+}
